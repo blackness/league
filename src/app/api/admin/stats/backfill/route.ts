@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { requireAdminRole, toAdminActor } from "@/lib/admin-request";
 import { normalizeStatsForStorage } from "@/lib/metrics";
 import {
   createSupabaseAdminClient,
@@ -159,6 +161,11 @@ async function fetchGamesByIds(
 }
 
 export async function POST(request: Request) {
+  const access = requireAdminRole(request, "owner");
+  if (!access.ok) {
+    return access.response as NextResponse;
+  }
+
   if (!isSupabaseConfigured) {
     return NextResponse.json({ error: "Supabase is not configured." }, { status: 400 });
   }
@@ -315,6 +322,33 @@ export async function POST(request: Request) {
     playerCursor: playerBatch.nextCursor,
   };
 
+  await writeAdminAuditLog({
+    action: mode === "commit" ? "stats.backfill.commit_batch" : "stats.backfill.dry_batch",
+    actor: toAdminActor(access.role),
+    role: access.role,
+    targetTable: "game_team_stats/player_game_stats",
+    targetId: null,
+    summary: `Processed stats backfill batch (${mode}).`,
+    details: {
+      batchSize,
+      scanned: {
+        teamRows: teamRows.length,
+        playerRows: playerRows.length,
+      },
+      changed: {
+        teamRows: teamChanged,
+        playerRows: playerChanged,
+      },
+      updated: {
+        teamRows: teamUpdated,
+        playerRows: playerUpdated,
+      },
+      skippedMissingGame,
+      hasMore,
+      nextCursor,
+    },
+  });
+
   return NextResponse.json({
     mode,
     batchSize,
@@ -339,4 +373,3 @@ export async function POST(request: Request) {
         : `Batch dry run complete: ${teamChanged + playerChanged} row(s) would be updated.`,
   });
 }
-

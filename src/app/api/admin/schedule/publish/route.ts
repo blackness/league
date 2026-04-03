@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { requireAdminRole, toAdminActor } from "@/lib/admin-request";
 import {
   createSupabaseAdminClient,
   isSupabaseAdminConfigured,
@@ -28,6 +30,11 @@ function buildGameKey(homeTeamId: string, awayTeamId: string, scheduledAt: strin
 }
 
 export async function POST(request: Request) {
+  const access = requireAdminRole(request, "admin");
+  if (!access.ok) {
+    return access.response as NextResponse;
+  }
+
   const payload = (await request.json()) as PublishPayload;
   const leagueId = payload.leagueId ?? "";
   const seasonId = payload.seasonId ?? "";
@@ -216,6 +223,23 @@ export async function POST(request: Request) {
       );
     }
   }
+
+  await writeAdminAuditLog({
+    action: "schedule.publish",
+    actor: toAdminActor(access.role),
+    role: access.role,
+    targetTable: "games",
+    targetId: null,
+    summary: `Published schedule into season ${seasonId}.`,
+    details: {
+      leagueId,
+      seasonId,
+      sportId,
+      insertedCount: rowsToInsert.length,
+      skippedCount: resolvedGames.length - rowsToInsert.length,
+      sourceGamesCount: games.length,
+    },
+  });
 
   return NextResponse.json({
     insertedCount: rowsToInsert.length,

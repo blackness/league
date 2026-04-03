@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { requireAdminRole, toAdminActor } from "@/lib/admin-request";
 import { parseGameMetadata } from "@/lib/game-metadata";
 import type { GameStatus } from "@/lib/portal-types";
 import {
@@ -158,6 +160,11 @@ export async function POST(
     );
   }
 
+  const access = requireAdminRole(request, "scorekeeper");
+  if (!access.ok) {
+    return access.response as NextResponse;
+  }
+
   const { gameId } = await context.params;
   const payload = await request.json().catch(() => null);
   const payloadRecord = isRecord(payload) ? payload : null;
@@ -228,6 +235,21 @@ export async function POST(
     if (result.error) {
       return NextResponse.json({ error: result.error.message }, { status: 400 });
     }
+
+    await writeAdminAuditLog({
+      action: "games.scorekeeper.save_state",
+      actor: toAdminActor(access.role),
+      role: access.role,
+      targetTable: "games",
+      targetId: gameId,
+      summary: `Saved scoreboard state for game ${gameId}.`,
+      details: {
+        homeScore: nextHomeScore,
+        awayScore: nextAwayScore,
+        status: nextStatus,
+        periodLabel: nextPeriodLabel,
+      },
+    });
 
     return NextResponse.json({ ok: true, action });
   }
@@ -304,6 +326,23 @@ export async function POST(
       return NextResponse.json({ error: updateGame.error.message }, { status: 400 });
     }
 
+    await writeAdminAuditLog({
+      action: "games.scorekeeper.record_event",
+      actor: toAdminActor(access.role),
+      role: access.role,
+      targetTable: "game_events",
+      targetId: gameId,
+      summary: `Recorded ${eventType} event for game ${gameId}.`,
+      details: {
+        eventType,
+        pointsHome,
+        pointsAway,
+        actorName,
+        nextHomeScore,
+        nextAwayScore,
+      },
+    });
+
     return NextResponse.json({
       ok: true,
       action,
@@ -334,6 +373,18 @@ export async function POST(
     if (result.error) {
       return NextResponse.json({ error: result.error.message }, { status: 400 });
     }
+
+    await writeAdminAuditLog({
+      action: "games.scorekeeper.save_scorepad",
+      actor: toAdminActor(access.role),
+      role: access.role,
+      targetTable: "games",
+      targetId: gameId,
+      summary: `Saved scorepad values for game ${gameId}.`,
+      details: {
+        fieldCount: Object.keys(safeValues).length,
+      },
+    });
 
     return NextResponse.json({ ok: true, action });
   }

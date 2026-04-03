@@ -82,6 +82,7 @@ export function ScorekeeperConsole({
   const [selectedPlayerId, setSelectedPlayerId] = useState("");
   const [slimInputScope, setSlimInputScope] = useState<"team" | "player">("team");
   const [slimMetricStep, setSlimMetricStep] = useState(1);
+  const [slimMetricFilter, setSlimMetricFilter] = useState("");
 
   const [activityLog, setActivityLog] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -172,6 +173,28 @@ export function ScorekeeperConsole({
     : {};
 
   const selectedTeamStats = teamStatsById[selectedTeamStatTargetId] ?? {};
+
+  const slimFilteredMetricKeys = useMemo(() => {
+    const source = slimInputScope === "team" ? trackedTeamMetrics : trackedPlayerMetrics;
+    const query = slimMetricFilter.trim().toLowerCase();
+    if (!query) {
+      return source;
+    }
+    return source.filter((metricKey) => {
+      const label =
+        slimInputScope === "team"
+          ? teamMetricLabels[metricKey] ?? toMetricLabelFromKey(metricKey)
+          : playerMetricLabels[metricKey] ?? toMetricLabelFromKey(metricKey);
+      return metricKey.toLowerCase().includes(query) || label.toLowerCase().includes(query);
+    });
+  }, [
+    playerMetricLabels,
+    slimInputScope,
+    slimMetricFilter,
+    teamMetricLabels,
+    trackedPlayerMetrics,
+    trackedTeamMetrics,
+  ]);
 
   const rosterByTeam = useMemo(() => {
     const grouped = new Map<string, GameRosterPlayerOption[]>();
@@ -847,6 +870,17 @@ export function ScorekeeperConsole({
               </select>
             </label>
 
+            <label className="flex flex-col gap-1 text-sm md:col-span-1">
+              <span className="font-medium text-slate-800">Filter Metrics</span>
+              <input
+                type="text"
+                value={slimMetricFilter}
+                onChange={(event) => setSlimMetricFilter(event.target.value)}
+                placeholder="Search stat..."
+                className="rounded-md border border-slate-300 px-3 py-2"
+              />
+            </label>
+
             {slimInputScope === "player" && (
               <label className="flex flex-col gap-1 text-sm md:col-span-1">
                 <span className="font-medium text-slate-800">Player</span>
@@ -881,7 +915,7 @@ export function ScorekeeperConsole({
           )}
 
           <div className="mt-4 grid gap-2 md:grid-cols-2">
-            {(slimInputScope === "team" ? trackedTeamMetrics : trackedPlayerMetrics).map((metricKey) => {
+            {slimFilteredMetricKeys.map((metricKey) => {
               const currentValue =
                 slimInputScope === "team"
                   ? selectedTeamStats[metricKey] ?? 0
@@ -922,6 +956,11 @@ export function ScorekeeperConsole({
                 </article>
               );
             })}
+            {slimFilteredMetricKeys.length === 0 && (
+              <p className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-sm text-slate-600 md:col-span-2">
+                No metrics match your filter.
+              </p>
+            )}
           </div>
         </article>
       )}

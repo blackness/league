@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { requireAdminRole, toAdminActor } from "@/lib/admin-request";
 import { buildDefaultGameMetadata, type GameCompetitionType } from "@/lib/game-metadata";
 import { getSportProfileById } from "@/lib/sport-config";
 import {
@@ -57,6 +59,11 @@ function playerNameKey(firstName: string, lastName: string): string {
 }
 
 export async function POST(request: Request) {
+  const access = requireAdminRole(request, "admin");
+  if (!access.ok) {
+    return access.response as NextResponse;
+  }
+
   if (!isSupabaseConfigured) {
     return NextResponse.json({ error: "Supabase environment is not configured." }, { status: 400 });
   }
@@ -526,6 +533,23 @@ export async function POST(request: Request) {
 
   await upsertRosterPlayers(homeTeamId, payload.homePlayers);
   await upsertRosterPlayers(awayTeamId, payload.awayPlayers);
+
+  await writeAdminAuditLog({
+    action: "games.create",
+    actor: toAdminActor(access.role),
+    role: access.role,
+    targetTable: "games",
+    targetId: createdGame.data.id,
+    summary: `Created ${competitionType} game ${createdGame.data.id}.`,
+    details: {
+      leagueId,
+      seasonId,
+      sportId,
+      homeTeamId,
+      awayTeamId,
+      status,
+    },
+  });
 
   return NextResponse.json({
     gameId: createdGame.data.id,

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AdminNav } from "@/components/admin-nav";
+import { AdminLogoutButton } from "@/components/admin-logout-button";
 
 export default function AdminLayout({
   children,
@@ -35,6 +36,7 @@ export default function AdminLayout({
             >
               Back To Public Site
             </Link>
+            <AdminLogoutButton />
           </div>
         </div>
         <div className="mt-4">

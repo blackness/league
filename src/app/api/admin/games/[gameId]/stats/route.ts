@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { requireAdminRole, toAdminActor } from "@/lib/admin-request";
 import { parseGameMetadata } from "@/lib/game-metadata";
 import { normalizeStatsForStorage } from "@/lib/metrics";
 import {
@@ -72,6 +74,10 @@ export async function POST(
   },
 ) {
   const { gameId } = await context.params;
+  const access = requireAdminRole(request, "scorekeeper");
+  if (!access.ok) {
+    return access.response as NextResponse;
+  }
 
   if (!isSupabaseConfigured) {
     return NextResponse.json(
@@ -173,6 +179,19 @@ export async function POST(
       return NextResponse.json({ error: result.error.message }, { status: 400 });
     }
 
+    await writeAdminAuditLog({
+      action: "games.stats.upsert_team",
+      actor: toAdminActor(access.role),
+      role: access.role,
+      targetTable: "game_team_stats",
+      targetId: `${gameId}:${teamId}`,
+      summary: `Updated team stats for game ${gameId}.`,
+      details: {
+        teamId,
+        metricCount: Object.keys(stats).length,
+      },
+    });
+
     return NextResponse.json({
       ok: true,
       action,
@@ -265,6 +284,22 @@ export async function POST(
       return NextResponse.json({ error: result.error.message }, { status: 400 });
     }
 
+    await writeAdminAuditLog({
+      action: "games.stats.upsert_player",
+      actor: toAdminActor(access.role),
+      role: access.role,
+      targetTable: "player_game_stats",
+      targetId: `${gameId}:${playerId}`,
+      summary: `Updated player stats for game ${gameId}.`,
+      details: {
+        teamId,
+        playerId,
+        metricCount: Object.keys(stats).length,
+        starter,
+        minutesPlayed,
+      },
+    });
+
     return NextResponse.json({
       ok: true,
       action,
@@ -307,6 +342,18 @@ export async function POST(
     if (result.error) {
       return NextResponse.json({ error: result.error.message }, { status: 400 });
     }
+
+    await writeAdminAuditLog({
+      action: "games.stats.delete_player",
+      actor: toAdminActor(access.role),
+      role: access.role,
+      targetTable: "player_game_stats",
+      targetId: `${gameId}:${playerId}`,
+      summary: `Deleted player stat row for game ${gameId}.`,
+      details: {
+        playerId,
+      },
+    });
 
     return NextResponse.json({
       ok: true,

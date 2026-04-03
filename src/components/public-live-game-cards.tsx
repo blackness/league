@@ -19,6 +19,19 @@ interface LiveUpdateRow {
   scheduled_at: string;
 }
 
+function statusBadgeClass(status: GameStatus): string {
+  if (status === "live") {
+    return "bg-rose-100 text-rose-700";
+  }
+  if (status === "final") {
+    return "bg-slate-200 text-slate-700";
+  }
+  if (status === "scheduled") {
+    return "bg-emerald-100 text-emerald-700";
+  }
+  return "bg-amber-100 text-amber-800";
+}
+
 export function PublicLiveGameCards({ initialLiveGames }: PublicLiveGameCardsProps) {
   const [liveGames, setLiveGames] = useState(initialLiveGames);
 
@@ -81,8 +94,10 @@ export function PublicLiveGameCards({ initialLiveGames }: PublicLiveGameCardsPro
       {liveGames.map((game) => (
         <li key={game.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
-              {game.status === "live" ? "Live" : game.status}
+            <p
+              className={`rounded-full px-2 py-1 text-xs font-semibold uppercase tracking-wide ${statusBadgeClass(game.status)}`}
+            >
+              {game.status === "live" ? "Live Now" : game.status}
             </p>
             <p className="text-xs text-slate-500">{game.periodLabel ?? "In Progress"}</p>
           </div>

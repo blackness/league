@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { requireAdminRole, toAdminActor } from "@/lib/admin-request";
 import { parseCsv } from "@/lib/csv";
 import {
   createSupabaseAdminClient,
@@ -117,6 +119,11 @@ function summarize(rows: RowValidation[]) {
 }
 
 export async function POST(request: Request) {
+  const access = requireAdminRole(request, "admin");
+  if (!access.ok) {
+    return access.response as NextResponse;
+  }
+
   const payload = (await request.json()) as TeamImportPayload;
   const mode: ImportMode = payload.mode === "commit" ? "commit" : "dry_run";
   const csvText = payload.csvText ?? "";
@@ -296,6 +303,16 @@ export async function POST(request: Request) {
 
   const summary = summarize(rows);
   if (mode === "dry_run") {
+    await writeAdminAuditLog({
+      action: "import.teams.dry_run",
+      actor: toAdminActor(access.role),
+      role: access.role,
+      targetTable: "teams",
+      targetId: null,
+      summary: "Executed team CSV dry-run validation.",
+      details: summary,
+    });
+
     return NextResponse.json({
       mode,
       requiredHeaders: REQUIRED_HEADERS,
@@ -404,6 +421,22 @@ export async function POST(request: Request) {
     insertedCount += 1;
   }
 
+  await writeAdminAuditLog({
+    action: "import.teams.commit",
+    actor: toAdminActor(access.role),
+    role: access.role,
+    targetTable: "teams",
+    targetId: null,
+    summary: "Committed team CSV import.",
+    details: {
+      rowCount: rows.length,
+      insertedCount,
+      updatedCount,
+      totalErrors: summary.totalErrors,
+      totalWarnings: summary.totalWarnings,
+    },
+  });
+
   return NextResponse.json({
     mode,
     requiredHeaders: REQUIRED_HEADERS,
@@ -417,4 +450,3 @@ export async function POST(request: Request) {
     },
   });
 }
-

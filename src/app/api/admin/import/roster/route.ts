@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { requireAdminRole, toAdminActor } from "@/lib/admin-request";
 import { parseCsv } from "@/lib/csv";
 import { createSupabaseServerClient, isSupabaseConfigured } from "@/lib/supabase";
 
@@ -30,6 +32,11 @@ function normalize(value: string): string {
 }
 
 export async function POST(request: Request) {
+  const access = requireAdminRole(request, "viewer");
+  if (!access.ok) {
+    return access.response as NextResponse;
+  }
+
   const payload = (await request.json()) as { csvText?: string };
   const csvText = payload.csvText ?? "";
 
@@ -181,6 +188,21 @@ export async function POST(request: Request) {
   const totalErrors = rowResults.reduce((sum, row) => sum + row.errors.length, 0);
   const totalWarnings = rowResults.reduce((sum, row) => sum + row.warnings.length, 0);
   const validRows = rowResults.filter((row) => row.errors.length === 0).length;
+
+  await writeAdminAuditLog({
+    action: "import.roster.dry_run",
+    actor: toAdminActor(access.role),
+    role: access.role,
+    targetTable: "team_rosters",
+    targetId: null,
+    summary: "Executed roster dry-run validation.",
+    details: {
+      rowCount: rowResults.length,
+      validRows,
+      totalErrors,
+      totalWarnings,
+    },
+  });
 
   return NextResponse.json({
     mode: canResolveAgainstDatabase ? "connected" : "demo",

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { writeAdminAuditLog } from "@/lib/admin-audit";
+import { requireAdminRole, toAdminActor } from "@/lib/admin-request";
 import {
   createSupabaseAdminClient,
   isSupabaseAdminConfigured,
@@ -61,6 +63,11 @@ function normalizeUrl(value: unknown): string | null {
 }
 
 export async function POST(request: Request) {
+  const access = requireAdminRole(request, "admin");
+  if (!access.ok) {
+    return access.response as NextResponse;
+  }
+
   if (!isSupabaseConfigured) {
     return NextResponse.json({ error: "Supabase environment is not configured." }, { status: 400 });
   }
@@ -142,6 +149,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: updated.error.message }, { status: 400 });
     }
 
+    await writeAdminAuditLog({
+      action: "teams.update",
+      actor: toAdminActor(access.role),
+      role: access.role,
+      targetTable: "teams",
+      targetId: (existingResult.data as { id: string }).id,
+      summary: `Updated team ${name}.`,
+      details: {
+        leagueId,
+        slug,
+      },
+    });
+
     return NextResponse.json({
       ok: true,
       operation: "updated",
@@ -178,6 +198,19 @@ export async function POST(request: Request) {
     );
   }
 
+  await writeAdminAuditLog({
+    action: "teams.create",
+    actor: toAdminActor(access.role),
+    role: access.role,
+    targetTable: "teams",
+    targetId: inserted.data.id,
+    summary: `Created team ${name}.`,
+    details: {
+      leagueId,
+      slug,
+    },
+  });
+
   return NextResponse.json({
     ok: true,
     operation: "created",
@@ -185,4 +218,3 @@ export async function POST(request: Request) {
     message: `Created team "${name}" in ${(leagueResult.data as { name: string }).name}.`,
   });
 }
-

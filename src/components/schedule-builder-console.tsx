@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { formatDateTimeUtc, todayUtcDate } from "@/lib/date-time";
-import type { ScheduleBuilderData } from "@/lib/portal-types";
+import type { GameStatus, ScheduleBuilderData } from "@/lib/portal-types";
 import {
   generateRoundRobinSchedule,
   type GeneratedSchedule,
@@ -20,6 +20,41 @@ interface PublishResponse {
   missingTeams: string[];
   message: string;
   mode: "admin" | "restricted";
+}
+
+interface SeasonGameItem {
+  gameId: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  homeTeamName: string;
+  awayTeamName: string;
+  scheduledAt: string;
+  status: GameStatus;
+  venueName: string | null;
+}
+
+interface SeasonGamesResponse {
+  seasonId: string;
+  games: SeasonGameItem[];
+}
+
+interface ScheduleChangeResponse {
+  ok: boolean;
+  gameId: string;
+  reason: string;
+  conflictCount: number;
+  conflicts: Array<{
+    id: string;
+    home_team_id: string;
+    away_team_id: string;
+    scheduled_at: string;
+    status: GameStatus;
+  }>;
+  game: {
+    scheduledAt: string;
+    status: GameStatus;
+    venueName: string | null;
+  };
 }
 
 function downloadCsv(schedule: GeneratedSchedule) {
@@ -40,6 +75,38 @@ function downloadCsv(schedule: GeneratedSchedule) {
   URL.revokeObjectURL(url);
 }
 
+function toDateInputValue(isoValue: string): string {
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const year = parsed.getUTCFullYear();
+  const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function toTimeInputValue(isoValue: string): string {
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return "19:00";
+  }
+  const hour = String(parsed.getUTCHours()).padStart(2, "0");
+  const minute = String(parsed.getUTCMinutes()).padStart(2, "0");
+  return `${hour}:${minute}`;
+}
+
+function toIsoFromDateTimeInputs(dateInput: string, timeInput: string): string | null {
+  if (!dateInput || !timeInput) {
+    return null;
+  }
+  const parsed = new Date(`${dateInput}T${timeInput}:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString();
+}
+
 export function ScheduleBuilderConsole({ initialData }: ScheduleBuilderConsoleProps) {
   const [selectedLeagueId, setSelectedLeagueId] = useState(initialData.leagues[0]?.leagueId ?? "");
   const [teamsText, setTeamsText] = useState("");
@@ -54,6 +121,18 @@ export function ScheduleBuilderConsole({ initialData }: ScheduleBuilderConsolePr
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishResult, setPublishResult] = useState<PublishResponse | null>(null);
+  const [seasonGames, setSeasonGames] = useState<SeasonGameItem[]>([]);
+  const [isLoadingSeasonGames, setIsLoadingSeasonGames] = useState(false);
+  const [seasonGamesError, setSeasonGamesError] = useState<string | null>(null);
+  const [selectedChangeGameId, setSelectedChangeGameId] = useState("");
+  const [changeDate, setChangeDate] = useState("");
+  const [changeTime, setChangeTime] = useState("19:00");
+  const [changeStatus, setChangeStatus] = useState<GameStatus>("scheduled");
+  const [changeVenueName, setChangeVenueName] = useState("");
+  const [changeReason, setChangeReason] = useState("Director requested change");
+  const [isApplyingChange, setIsApplyingChange] = useState(false);
+  const [changeError, setChangeError] = useState<string | null>(null);
+  const [changeResult, setChangeResult] = useState<ScheduleChangeResponse | null>(null);
 
   const selectedLeague = useMemo(
     () => initialData.leagues.find((league) => league.leagueId === selectedLeagueId) ?? null,
@@ -83,6 +162,31 @@ export function ScheduleBuilderConsole({ initialData }: ScheduleBuilderConsolePr
         .filter(Boolean),
     [teamsText],
   );
+
+  const selectedSeasonGame = useMemo(
+    () => seasonGames.find((game) => game.gameId === selectedChangeGameId) ?? null,
+    [seasonGames, selectedChangeGameId],
+  );
+
+  useEffect(() => {
+    if (!selectedLeague) {
+      setSeasonGames([]);
+      setSelectedChangeGameId("");
+      return;
+    }
+    setSeasonGames([]);
+    setSelectedChangeGameId("");
+  }, [selectedLeague]);
+
+  useEffect(() => {
+    if (!selectedSeasonGame) {
+      return;
+    }
+    setChangeDate(toDateInputValue(selectedSeasonGame.scheduledAt));
+    setChangeTime(toTimeInputValue(selectedSeasonGame.scheduledAt));
+    setChangeStatus(selectedSeasonGame.status);
+    setChangeVenueName(selectedSeasonGame.venueName ?? "");
+  }, [selectedSeasonGame]);
 
   function onGenerate() {
     const constraints: ScheduleConstraints = {
@@ -144,6 +248,100 @@ export function ScheduleBuilderConsole({ initialData }: ScheduleBuilderConsolePr
       setPublishError("Publish request failed. Check your connection and try again.");
     } finally {
       setIsPublishing(false);
+    }
+  }
+
+  async function loadSeasonGames() {
+    if (!selectedLeague) {
+      setSeasonGamesError("Select a league/season first.");
+      return;
+    }
+
+    setIsLoadingSeasonGames(true);
+    setSeasonGamesError(null);
+    setChangeResult(null);
+    setChangeError(null);
+
+    try {
+      const response = await fetch("/api/admin/schedule/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          seasonId: selectedLeague.seasonId,
+        }),
+      });
+      const body = (await response.json()) as SeasonGamesResponse | { error?: string };
+      if (!response.ok) {
+        setSeasonGamesError((body as { error?: string }).error ?? "Failed to load season games.");
+        return;
+      }
+
+      const rows = (body as SeasonGamesResponse).games;
+      setSeasonGames(rows);
+      setSelectedChangeGameId(rows[0]?.gameId ?? "");
+    } catch {
+      setSeasonGamesError("Failed to load season games.");
+    } finally {
+      setIsLoadingSeasonGames(false);
+    }
+  }
+
+  async function applyScheduleChange() {
+    if (!selectedSeasonGame) {
+      setChangeError("Select a game to update.");
+      return;
+    }
+
+    const nextScheduledAt = toIsoFromDateTimeInputs(changeDate, changeTime);
+    if (!nextScheduledAt) {
+      setChangeError("Provide valid UTC date and time.");
+      return;
+    }
+
+    setIsApplyingChange(true);
+    setChangeError(null);
+    setChangeResult(null);
+
+    try {
+      const response = await fetch("/api/admin/schedule/change", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          gameId: selectedSeasonGame.gameId,
+          scheduledAt: nextScheduledAt,
+          status: changeStatus,
+          venueName: changeVenueName,
+          reason: changeReason,
+        }),
+      });
+      const body = (await response.json()) as ScheduleChangeResponse | { error?: string };
+      if (!response.ok) {
+        setChangeError((body as { error?: string }).error ?? "Failed to apply schedule change.");
+        return;
+      }
+
+      const result = body as ScheduleChangeResponse;
+      setChangeResult(result);
+      setSeasonGames((previous) =>
+        previous.map((game) =>
+          game.gameId === result.gameId
+            ? {
+                ...game,
+                scheduledAt: result.game.scheduledAt,
+                status: result.game.status,
+                venueName: result.game.venueName,
+              }
+            : game,
+        ),
+      );
+    } catch {
+      setChangeError("Failed to apply schedule change.");
+    } finally {
+      setIsApplyingChange(false);
     }
   }
 
@@ -370,6 +568,143 @@ export function ScheduleBuilderConsole({ initialData }: ScheduleBuilderConsolePr
           </div>
         </article>
       )}
+
+      <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-semibold text-slate-900">Ad-hoc Schedule Changes</h3>
+        <p className="mt-1 text-sm text-slate-600">
+          Update existing game date/time/status/venue without rebuilding the full schedule.
+        </p>
+
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={!selectedLeague || isLoadingSeasonGames}
+            onClick={loadSeasonGames}
+            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
+          >
+            {isLoadingSeasonGames ? "Loading..." : "Load Season Games"}
+          </button>
+          {selectedLeague && (
+            <p className="self-center text-xs text-slate-500">
+              Season: {selectedLeague.seasonName} ({selectedLeague.leagueName})
+            </p>
+          )}
+        </div>
+
+        {seasonGamesError && (
+          <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {seasonGamesError}
+          </p>
+        )}
+
+        {seasonGames.length > 0 && (
+          <>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium text-slate-800">Game</span>
+                <select
+                  value={selectedChangeGameId}
+                  onChange={(event) => setSelectedChangeGameId(event.target.value)}
+                  className="rounded-md border border-slate-300 px-3 py-2"
+                >
+                  {seasonGames.map((game) => (
+                    <option key={game.gameId} value={game.gameId}>
+                      {game.homeTeamName} vs {game.awayTeamName} - {formatDateTimeUtc(game.scheduledAt)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {selectedSeasonGame && (
+              <div className="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="font-medium text-slate-800">New Date (UTC)</span>
+                  <input
+                    type="date"
+                    value={changeDate}
+                    onChange={(event) => setChangeDate(event.target.value)}
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="font-medium text-slate-800">New Time (UTC)</span>
+                  <input
+                    type="time"
+                    value={changeTime}
+                    onChange={(event) => setChangeTime(event.target.value)}
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="font-medium text-slate-800">Status</span>
+                  <select
+                    value={changeStatus}
+                    onChange={(event) => setChangeStatus(event.target.value as GameStatus)}
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  >
+                    <option value="scheduled">scheduled</option>
+                    <option value="live">live</option>
+                    <option value="final">final</option>
+                    <option value="postponed">postponed</option>
+                    <option value="canceled">canceled</option>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-sm md:col-span-2">
+                  <span className="font-medium text-slate-800">Venue</span>
+                  <input
+                    type="text"
+                    value={changeVenueName}
+                    onChange={(event) => setChangeVenueName(event.target.value)}
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm md:col-span-2 lg:col-span-3">
+                  <span className="font-medium text-slate-800">Reason</span>
+                  <input
+                    type="text"
+                    value={changeReason}
+                    onChange={(event) => setChangeReason(event.target.value)}
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  />
+                </label>
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={!selectedSeasonGame || isApplyingChange}
+              onClick={applyScheduleChange}
+              className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
+            >
+              {isApplyingChange ? "Applying Change..." : "Apply Schedule Change"}
+            </button>
+          </>
+        )}
+
+        {changeError && (
+          <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {changeError}
+          </p>
+        )}
+
+        {changeResult && (
+          <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+            <p className="font-semibold">
+              Schedule updated. Conflict count: {changeResult.conflictCount}
+            </p>
+            {changeResult.conflicts.length > 0 && (
+              <ul className="mt-2 space-y-1 text-xs text-emerald-900">
+                {changeResult.conflicts.slice(0, 8).map((conflict) => (
+                  <li key={conflict.id}>
+                    Conflict game {conflict.id}: {formatDateTimeUtc(conflict.scheduled_at)} ({conflict.status})
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </article>
     </section>
   );
 }

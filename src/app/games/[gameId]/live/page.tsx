@@ -28,12 +28,23 @@ export default async function LiveGamePage({ params }: LiveGamePageProps) {
           {game.homeTeam} vs {game.awayTeam}
         </h1>
         <p className="mt-2 text-sm text-slate-600">{game.statusMessage}</p>
-        <Link
-          href={`/games/${gameId}/stats`}
-          className="mt-3 block text-sm font-semibold text-cyan-700 hover:text-cyan-900"
-        >
-          Open Detailed Boxscore
-        </Link>
+        <div className="mt-3 flex flex-wrap gap-3 text-sm font-semibold">
+          <Link href={`/games/${gameId}/stats`} className="text-cyan-700 hover:text-cyan-900">
+            Open Detailed Boxscore
+          </Link>
+          <Link href={`/teams/${game.homeTeamId}`} className="text-slate-700 hover:text-slate-900">
+            {game.homeTeam} Team Page
+          </Link>
+          <Link href={`/teams/${game.awayTeamId}`} className="text-slate-700 hover:text-slate-900">
+            {game.awayTeam} Team Page
+          </Link>
+          <Link
+            href={`/compare?teamA=${game.homeTeamId}&teamB=${game.awayTeamId}`}
+            className="text-slate-700 hover:text-slate-900"
+          >
+            Compare These Teams
+          </Link>
+        </div>
       </section>
 
       <LiveGamePanel initialGame={game} statsSnapshot={statsSnapshot} />

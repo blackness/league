@@ -40,6 +40,8 @@ Stack:
 - `/admin/games/new` Ad-hoc/league/tournament game setup wizard
 - `/admin/schedule-builder` Round-robin schedule generator
 - `/api/admin/schedule/publish` Publish generated schedule into `games`
+- `/api/admin/schedule/list` List season games for ad-hoc schedule edits
+- `/api/admin/schedule/change` Apply ad-hoc schedule changes with conflict checks
 - `/admin/import` CSV roster dry run
 - `/admin/games/:gameId/scorekeeper` Live scorekeeper console
 - `/api/admin/games/:gameId/scorekeeper` Scoreboard/clock/event/scorepad actions
@@ -67,12 +69,23 @@ cp .env.example .env.local
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=... # required for server-side admin write routes
+ADMIN_ACCESS_KEY=... # legacy owner-level passcode
+ADMIN_OWNER_KEY=... # owner role (full access)
+ADMIN_ADMIN_KEY=... # admin role
+ADMIN_SCOREKEEPER_KEY=... # scorekeeper role
+ADMIN_VIEWER_KEY=... # read-only admin role
 ```
 
 4. In Supabase Dashboard, open SQL Editor and run:
 
 ```sql
 -- Paste supabase/schema.sql and execute
+```
+
+Then run the admin ops patch:
+
+```sql
+-- Paste supabase/patches/admin_ops_upgrade.sql and execute
 ```
 
 5. Start the app:
@@ -94,6 +107,13 @@ public/samples/sample_teams_players.csv
 - Reuse one existing Supabase project or pause one old project before creating a new one.
 - Keep Vercel on Hobby while testing/non-commercial.
 - Use YouTube/Hudl embeds instead of hosting video files.
+
+## Admin Access Guard
+
+- `/admin/*` and `/api/admin/*` are protected by middleware.
+- Open `/login-admin` and sign in with one of your configured role passcodes.
+- Role hierarchy: `viewer` < `scorekeeper` < `admin` < `owner`.
+- If only `ADMIN_ACCESS_KEY` is set, it behaves as `owner`.
 
 ## Suggested Next Milestones
 
